@@ -145,6 +145,17 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (data.type === 'chat') {
+      let message = String(data.message ?? '')
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 120);
+      if (!message) return;
+      broadcast({ type: 'chat', id: player.id, name: player.name, message });
+      return;
+    }
+
     if (data.type !== 'state') return;
 
     player.x = finite(data.x, player.x);
