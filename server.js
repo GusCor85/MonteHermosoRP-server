@@ -7,6 +7,7 @@ const players = new Map();
 const vehicles = new Map();
 
 const VEHICLE_TYPES = new Set(['bus', 'ambulancia', 'barco', 'camion']);
+const CHAT_RANGE_METERS = 50;
 
 function send(ws, data) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
@@ -55,6 +56,7 @@ function playerStateMessage(player) {
     z: player.z,
     ry: player.ry,
     name: player.name,
+    player_variant: player.player_variant,
     in_vehicle: player.in_vehicle,
     vehicle_type: player.vehicle_type,
     vehicle_id: player.vehicle_id
@@ -86,6 +88,7 @@ wss.on('connection', (ws) => {
     id, ws,
     x: 0, y: 1.15, z: -15, ry: 0,
     name: 'Jugador',
+    player_variant: 0,
     in_vehicle: false,
     vehicle_type: '',
     vehicle_id: '',
@@ -152,7 +155,16 @@ wss.on('connection', (ws) => {
         .trim()
         .slice(0, 120);
       if (!message) return;
-      broadcast({ type: 'chat', id: player.id, name: player.name, message });
+      const maxDistanceSquared = CHAT_RANGE_METERS * CHAT_RANGE_METERS;
+      const chatPayload = { type: 'chat', id: player.id, name: player.name, message };
+      for (const [, recipient] of players) {
+        if (recipient.ws.readyState !== WebSocket.OPEN) continue;
+        const dx = finite(recipient.x, 0) - finite(player.x, 0);
+        const dz = finite(recipient.z, 0) - finite(player.z, 0);
+        if ((dx * dx) + (dz * dz) <= maxDistanceSquared) {
+          send(recipient.ws, chatPayload);
+        }
+      }
       return;
     }
 
@@ -163,6 +175,7 @@ wss.on('connection', (ws) => {
     player.z = finite(data.z, player.z);
     player.ry = finite(data.ry, player.ry);
     player.name = cleanName(data.name);
+    player.player_variant = Math.max(0, Math.min(4, Math.trunc(finite(data.player_variant, player.player_variant))));
 
     const requestedVehicle = String(data.vehicle_type || '');
     const requestedVehicleId = String(data.vehicle_id || '');
