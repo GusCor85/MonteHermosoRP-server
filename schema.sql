@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS mh_rp_accounts (
+  id BIGSERIAL PRIMARY KEY,
+  username VARCHAR(24) NOT NULL UNIQUE,
+  password_salt VARCHAR(64) NOT NULL,
+  password_hash VARCHAR(256) NOT NULL,
+  profile JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

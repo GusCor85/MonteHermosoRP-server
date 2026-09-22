@@ -1,5 +1,6 @@
 const http = require('http');
 const WebSocket = require('ws');
+const accountStore = require('./account_store');
 
 const PORT = process.env.PORT || 9080;
 let nextId = 1;
@@ -30,6 +31,13 @@ function cleanName(value) {
   let name = String(value ?? '').replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!name) name = 'Jugador';
   return name.slice(0, 24);
+}
+
+function cleanProfile(profile) {
+  if (!profile || typeof profile !== 'object') return {};
+  const json = JSON.stringify(profile);
+  if (json.length > 200000) return {};
+  return profile;
 }
 
 function vehicleStateMessage(vehicle) {
@@ -73,32 +81,58 @@ function playerStateMessage(player) {
   return msg;
 }
 
-wss = null;
-
 const httpServer = http.createServer((_req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end('Monte Hermoso RP multiplayer server OK\n');
 });
 
-wss = new WebSocket.Server({ server: httpServer });
+const wss = new WebSocket.Server({ server: httpServer });
 
-wss.on('connection', (ws) => {
+async function authenticateConnection(ws, session, data) {
+  if (session.authenticated) return true;
+  if (data.type !== 'auth') {
+    send(ws, { type: 'auth_error', message: 'Primero tenés que iniciar sesión.' });
+    return false;
+  }
+
+  const result = await accountStore.authenticate(data.username, data.password);
+  if (!result.ok) {
+    send(ws, { type: 'auth_error', message: result.message });
+    return false;
+  }
+
   const id = String(nextId++);
+  const profile = result.profile || accountStore.defaultProfile(result.username);
   const player = {
-    id, ws,
-    x: 0, y: 1.15, z: -15, ry: 0,
-    name: 'Jugador',
-    player_variant: 0,
+    id,
+    ws,
+    username: result.username,
+    profile,
+    x: 0,
+    y: 1.15,
+    z: -15,
+    ry: 0,
+    name: cleanName(profile.display_name),
+    player_variant: Math.max(0, Math.min(4, Math.trunc(finite(profile.player_variant, 0)))),
     in_vehicle: false,
     vehicle_type: '',
     vehicle_id: '',
-    lx: 0, ly: 0, lz: 0, lry: 0
+    lx: 0,
+    ly: 0,
+    lz: 0,
+    lry: 0
   };
+
+  session.authenticated = true;
+  session.player = player;
   players.set(id, player);
 
   send(ws, {
-    type: 'welcome',
+    type: 'auth_ok',
     id,
+    username: result.username,
+    created: result.created === true,
+    profile,
     vehicles: Array.from(vehicles.values()).map(vehicleStateMessage)
   });
 
@@ -106,14 +140,46 @@ wss.on('connection', (ws) => {
     if (otherId !== id) send(ws, playerStateMessage(other));
   }
   broadcast({ type: 'player_joined', ...playerStateMessage(player) }, ws);
+  return true;
+}
 
-  ws.on('message', (raw) => {
+wss.on('connection', (ws) => {
+  const session = { authenticated: false, player: null };
+
+  ws.on('message', async (raw) => {
     let data;
     try { data = JSON.parse(raw.toString()); } catch { return; }
     if (!data) return;
 
-    // Los clientes pueden enviar el estado del vehiculo de forma independiente.
-    // El servidor lo retransmite a todos los demas clientes sin usarlo como estado del jugador.
+    if (!session.authenticated) {
+      try {
+        await authenticateConnection(ws, session, data);
+      } catch (error) {
+        console.error('[accounts] Error de autenticación:', error);
+        send(ws, { type: 'auth_error', message: 'No se pudo completar el inicio de sesión.' });
+      }
+      return;
+    }
+
+    const player = session.player;
+    if (!player) return;
+
+    if (data.type === 'profile_save') {
+      const safeProfile = cleanProfile(data.profile);
+      if (!safeProfile || Object.keys(safeProfile).length === 0) return;
+      player.profile = safeProfile;
+      const displayName = cleanName(safeProfile.display_name || player.name);
+      player.name = displayName;
+      player.player_variant = Math.max(0, Math.min(4, Math.trunc(finite(safeProfile.player_variant, player.player_variant))));
+      try {
+        await accountStore.saveProfile(player.username, safeProfile);
+      } catch (error) {
+        console.error('[accounts] Error guardando perfil:', error);
+        send(ws, { type: 'profile_save_error', message: 'No se pudo guardar el progreso.' });
+      }
+      return;
+    }
+
     if (data.type === 'vehicle_state') {
       const vehicleType = String(data.vehicle_type || '');
       const vehicleId = String(data.vehicle_id || '');
@@ -223,19 +289,36 @@ wss.on('connection', (ws) => {
     broadcast(playerStateMessage(player), ws);
   });
 
-  ws.on('close', () => {
+  ws.on('close', async () => {
+    const player = session.player;
+    if (!player) return;
+
+    try {
+      if (player.profile && typeof player.profile === 'object') {
+        player.profile.display_name = player.name;
+        player.profile.player_variant = player.player_variant;
+        await accountStore.saveProfile(player.username, player.profile);
+      }
+    } catch (error) {
+      console.error('[accounts] Error guardando al desconectar:', error);
+    }
+
     if (player.vehicle_id && vehicles.has(player.vehicle_id)) {
       const vehicle = vehicles.get(player.vehicle_id);
-      if (vehicle.driver_id === id) {
+      if (vehicle.driver_id === player.id) {
         vehicles.delete(player.vehicle_id);
       }
     }
-    players.delete(id);
-    broadcast({ type: 'player_left', id, vehicle_id: player.vehicle_id });
+    players.delete(player.id);
+    broadcast({ type: 'player_left', id: player.id, vehicle_id: player.vehicle_id });
     if (player.vehicle_id) {
       broadcast({ type: 'vehicle_removed', vehicle_id: player.vehicle_id });
     }
   });
+});
+
+accountStore.init().catch((error) => {
+  console.error('[accounts] No se pudo inicializar la persistencia:', error);
 });
 
 httpServer.listen(PORT, '0.0.0.0', () => {
