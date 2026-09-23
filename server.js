@@ -13,7 +13,6 @@ const CHAT_RANGE_METERS = 50;
 function send(ws, data) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
 }
-
 function broadcast(data, except = null) {
   const payload = JSON.stringify(data);
   for (const [, player] of players) {
@@ -32,7 +31,6 @@ function cleanName(value) {
   if (!name) name = 'Jugador';
   return name.slice(0, 24);
 }
-
 function cleanProfile(profile) {
   if (!profile || typeof profile !== 'object') return {};
   const json = JSON.stringify(profile);
@@ -54,7 +52,6 @@ function vehicleStateMessage(vehicle) {
     driver_id: vehicle.driver_id || ''
   };
 }
-
 function playerStateMessage(player) {
   const msg = {
     type: 'player_state',
@@ -94,13 +91,11 @@ async function authenticateConnection(ws, session, data) {
     send(ws, { type: 'auth_error', message: 'Primero tenés que iniciar sesión.' });
     return false;
   }
-
   const result = await accountStore.authenticate(data.username, data.password);
   if (!result.ok) {
     send(ws, { type: 'auth_error', message: result.message });
     return false;
   }
-
   const id = String(nextId++);
   const profile = result.profile || accountStore.defaultProfile(result.username);
   const player = {
@@ -122,7 +117,6 @@ async function authenticateConnection(ws, session, data) {
     lz: 0,
     lry: 0
   };
-
   session.authenticated = true;
   session.player = player;
   players.set(id, player);
@@ -150,9 +144,17 @@ wss.on('connection', (ws) => {
     let data;
     try { data = JSON.parse(raw.toString()); } catch { return; }
     if (!data) return;
-
     if (!session.authenticated) {
       try {
+        if (data.type === 'check_username') {
+          const result = await accountStore.hasUsername(data.username);
+          if (!result.ok) {
+            send(ws, { type: 'username_check_result', ok: false, exists: false, message: result.message || 'No se pudo comprobar el usuario.' });
+          } else {
+            send(ws, { type: 'username_check_result', ok: true, exists: result.exists === true, message: '' });
+          }
+          return;
+        }
         await authenticateConnection(ws, session, data);
       } catch (error) {
         console.error('[accounts] Error de autenticación:', error);
@@ -163,7 +165,6 @@ wss.on('connection', (ws) => {
 
     const player = session.player;
     if (!player) return;
-
     if (data.type === 'profile_save') {
       const safeProfile = cleanProfile(data.profile);
       if (!safeProfile || Object.keys(safeProfile).length === 0) return;
@@ -179,7 +180,6 @@ wss.on('connection', (ws) => {
       }
       return;
     }
-
     if (data.type === 'vehicle_state') {
       const vehicleType = String(data.vehicle_type || '');
       const vehicleId = String(data.vehicle_id || '');
@@ -203,7 +203,6 @@ wss.on('connection', (ws) => {
       broadcast(vehicleStateMessage(updated), ws);
       return;
     }
-
     if (data.type === 'vehicle_removed') {
       const vehicleId = String(data.vehicle_id || '');
       if (!vehicleId) return;
@@ -213,7 +212,6 @@ wss.on('connection', (ws) => {
       broadcast({ type: 'vehicle_removed', vehicle_id: vehicleId }, ws);
       return;
     }
-
     if (data.type === 'chat') {
       let message = String(data.message ?? '')
         .replace(/[\r\n\t]+/g, ' ')
@@ -233,7 +231,6 @@ wss.on('connection', (ws) => {
       }
       return;
     }
-
     if (data.type !== 'state') return;
 
     player.x = finite(data.x, player.x);
@@ -242,14 +239,12 @@ wss.on('connection', (ws) => {
     player.ry = finite(data.ry, player.ry);
     player.name = cleanName(data.name);
     player.player_variant = Math.max(0, Math.min(4, Math.trunc(finite(data.player_variant, player.player_variant))));
-
     const requestedVehicle = String(data.vehicle_type || '');
     const requestedVehicleId = String(data.vehicle_id || '');
     const previousVehicleId = player.vehicle_id;
     player.in_vehicle = data.in_vehicle === true && VEHICLE_TYPES.has(requestedVehicle) && !!requestedVehicleId;
     player.vehicle_type = player.in_vehicle ? requestedVehicle : '';
     player.vehicle_id = player.in_vehicle ? requestedVehicleId : '';
-
     if (previousVehicleId && previousVehicleId !== player.vehicle_id) {
       const previousVehicle = vehicles.get(previousVehicleId);
       if (previousVehicle && previousVehicle.driver_id === player.id) {
@@ -257,13 +252,11 @@ wss.on('connection', (ws) => {
         broadcast({ type: 'vehicle_removed', vehicle_id: previousVehicleId }, ws);
       }
     }
-
     if (player.in_vehicle) {
       player.lx = finite(data.lx, player.lx);
       player.ly = finite(data.ly, player.ly);
       player.lz = finite(data.lz, player.lz);
       player.lry = finite(data.lry, player.lry);
-
       const v = data.vehicle;
       if (v && typeof v === 'object' && requestedVehicle === String(v.vehicle_type) && requestedVehicleId === String(v.vehicle_id) && VEHICLE_TYPES.has(requestedVehicle)) {
         const old = vehicles.get(requestedVehicleId) || {
@@ -285,14 +278,12 @@ wss.on('connection', (ws) => {
         broadcast(vehicleStateMessage(updated), ws);
       }
     }
-
     broadcast(playerStateMessage(player), ws);
   });
 
   ws.on('close', async () => {
     const player = session.player;
     if (!player) return;
-
     try {
       if (player.profile && typeof player.profile === 'object') {
         player.profile.display_name = player.name;
@@ -302,7 +293,6 @@ wss.on('connection', (ws) => {
     } catch (error) {
       console.error('[accounts] Error guardando al desconectar:', error);
     }
-
     if (player.vehicle_id && vehicles.has(player.vehicle_id)) {
       const vehicle = vehicles.get(player.vehicle_id);
       if (vehicle.driver_id === player.id) {

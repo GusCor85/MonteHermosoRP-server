@@ -13,7 +13,6 @@ const pool = hasDatabase
       ssl: process.env.DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false }
     })
   : null;
-
 const memoryUsers = new Map();
 const PASSWORD_MIN_LENGTH = 4;
 const PASSWORD_MAX_LENGTH = 64;
@@ -21,21 +20,18 @@ const PASSWORD_MAX_LENGTH = 64;
 function normalizeUsername(value) {
   return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 24);
 }
-
 function validateUsername(value) {
   const username = normalizeUsername(value);
   if (username.length < 3) return { ok: false, message: 'El usuario debe tener al menos 3 caracteres.' };
   if (username.length > 24) return { ok: false, message: 'El usuario es demasiado largo.' };
   return { ok: true, username };
 }
-
 function validatePassword(value) {
   const password = String(value ?? '');
   if (password.length < PASSWORD_MIN_LENGTH) return { ok: false, message: 'La contraseña debe tener al menos 4 caracteres.' };
   if (password.length > PASSWORD_MAX_LENGTH) return { ok: false, message: 'La contraseña es demasiado larga.' };
   return { ok: true, password };
 }
-
 function defaultProfile(username) {
   return {
     version: 1,
@@ -61,7 +57,6 @@ function defaultProfile(username) {
     owned_vehicles: []
   };
 }
-
 function mergeProfile(base, incoming) {
   const source = incoming && typeof incoming === 'object' ? incoming : {};
   const result = { ...base, ...source };
@@ -70,7 +65,6 @@ function mergeProfile(base, incoming) {
   result.display_name = String(source.display_name ?? base.display_name).slice(0, 24);
   result.player_variant = Math.max(0, Math.min(4, Number.parseInt(source.player_variant ?? base.player_variant, 10) || 0));
   result.money = Math.max(0, Math.floor(Number(source.money ?? base.money) || 0));
-
   result.job_levels = { ...base.job_levels, ...(source.job_levels || {}) };
   for (const key of Object.keys(result.job_levels)) {
     result.job_levels[key] = Math.max(0, Math.floor(Number(result.job_levels[key]) || 0));
@@ -81,7 +75,6 @@ function mergeProfile(base, incoming) {
   } else if (source.agriculture === null) {
     result.agriculture = null;
   }
-
   if (Array.isArray(source.owned_vehicles)) {
     result.owned_vehicles = source.owned_vehicles
       .filter(v => typeof v === 'string')
@@ -91,20 +84,17 @@ function mergeProfile(base, incoming) {
   }
   return result;
 }
-
 async function hashPassword(password, saltHex = null) {
   const salt = saltHex ? Buffer.from(saltHex, 'hex') : crypto.randomBytes(16);
   const derived = await scryptAsync(password, salt, 64);
   return { salt: salt.toString('hex'), hash: Buffer.from(derived).toString('hex') };
 }
-
 async function verifyPassword(password, saltHex, hashHex) {
   const derived = await scryptAsync(password, Buffer.from(saltHex, 'hex'), 64);
   const expected = Buffer.from(hashHex, 'hex');
   const actual = Buffer.from(derived);
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
-
 async function init() {
   if (!pool) {
     console.warn('[accounts] DATABASE_URL no está configurada. Se usará almacenamiento temporal en memoria.');
@@ -123,7 +113,19 @@ async function init() {
   `);
   console.log('[accounts] PostgreSQL listo.');
 }
-
+async function hasUsername(rawUsername) {
+  const userCheck = validateUsername(rawUsername);
+  if (!userCheck.ok) return { ok: false, exists: false, message: userCheck.message };
+  const username = userCheck.username;
+  if (!pool) {
+    return { ok: true, exists: memoryUsers.has(username) };
+  }
+  const found = await pool.query(
+    'SELECT 1 FROM mh_rp_accounts WHERE username = $1 LIMIT 1',
+    [username]
+  );
+  return { ok: true, exists: found.rowCount > 0 };
+}
 async function authenticate(rawUsername, rawPassword) {
   const userCheck = validateUsername(rawUsername);
   if (!userCheck.ok) return { ok: false, message: userCheck.message };
@@ -132,7 +134,6 @@ async function authenticate(rawUsername, rawPassword) {
 
   const username = userCheck.username;
   const password = passwordCheck.password;
-
   if (!pool) {
     let account = memoryUsers.get(username);
     if (!account) {
@@ -147,12 +148,10 @@ async function authenticate(rawUsername, rawPassword) {
     account.profile = mergeProfile(defaultProfile(username), account.profile);
     return { ok: true, created: false, username, profile: account.profile };
   }
-
   const found = await pool.query(
     'SELECT username, password_salt, password_hash, profile FROM mh_rp_accounts WHERE username = $1 LIMIT 1',
     [username]
   );
-
   if (found.rowCount === 0) {
     const credentials = await hashPassword(password);
     const profile = defaultProfile(username);
@@ -162,7 +161,6 @@ async function authenticate(rawUsername, rawPassword) {
     );
     return { ok: true, created: true, username, profile };
   }
-
   const row = found.rows[0];
   const valid = await verifyPassword(password, row.password_salt, row.password_hash);
   if (!valid) return { ok: false, message: 'Usuario o contraseña incorrectos.' };
@@ -171,7 +169,6 @@ async function authenticate(rawUsername, rawPassword) {
   await pool.query('UPDATE mh_rp_accounts SET profile = $2::jsonb, updated_at = NOW() WHERE username = $1', [username, JSON.stringify(profile)]);
   return { ok: true, created: false, username, profile };
 }
-
 async function saveProfile(username, profile) {
   const userCheck = validateUsername(username);
   if (!userCheck.ok) return false;
@@ -184,7 +181,6 @@ async function saveProfile(username, profile) {
     account.profile = safeProfile;
     return true;
   }
-
   await pool.query(
     'UPDATE mh_rp_accounts SET profile = $2::jsonb, updated_at = NOW() WHERE username = $1',
     [normalized, JSON.stringify(safeProfile)]
@@ -196,6 +192,7 @@ module.exports = {
   init,
   authenticate,
   saveProfile,
+  hasUsername,
   normalizeUsername,
   validateUsername,
   validatePassword,
