@@ -155,6 +155,16 @@ wss.on('connection', (ws) => {
           }
           return;
         }
+        if (data.type === 'create_account') {
+          const result = await accountStore.createAccount(data.username, data.password);
+          if (!result.ok) {
+            send(ws, { type: 'create_account_error', message: result.message || 'No se pudo crear la cuenta.' });
+            return;
+          }
+          send(ws, { type: 'create_account_ok', username: result.username, profile: result.profile });
+          await authenticateConnection(ws, session, { type: 'auth', username: result.username, password: data.password });
+          return;
+        }
         await authenticateConnection(ws, session, data);
       } catch (error) {
         console.error('[accounts] Error de autenticación:', error);
