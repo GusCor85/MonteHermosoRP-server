@@ -7,7 +7,7 @@ let nextId = 1;
 const players = new Map();
 const vehicles = new Map();
 
-const VEHICLE_TYPES = new Set(['bus', 'ambulancia', 'barco', 'camion', 'trailero', 'particular', 'taxi']);
+const VEHICLE_TYPES = new Set(['bus', 'ambulancia', 'barco', 'camion', 'trailero', 'particular', 'taxi', 'helicoptero']);
 const CHAT_RANGE_METERS = 50;
 
 function send(ws, data) {
