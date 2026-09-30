@@ -54,7 +54,8 @@ function defaultProfile(username) {
       trailero: 0
     },
     agriculture: null,
-    owned_vehicles: []
+    owned_vehicles: [],
+    bank_balance: 0
   };
 }
 function mergeProfile(base, incoming) {
@@ -65,6 +66,7 @@ function mergeProfile(base, incoming) {
   result.display_name = String(source.display_name ?? base.display_name).slice(0, 24);
   result.player_variant = Math.max(0, Math.min(4, Number.parseInt(source.player_variant ?? base.player_variant, 10) || 0));
   result.money = Math.max(0, Math.floor(Number(source.money ?? base.money) || 0));
+  result.bank_balance = Math.max(0, Math.floor(Number(source.bank_balance ?? base.bank_balance) || 0));
   result.job_levels = { ...base.job_levels, ...(source.job_levels || {}) };
   for (const key of Object.keys(result.job_levels)) {
     result.job_levels[key] = Math.max(0, Math.floor(Number(result.job_levels[key]) || 0));
@@ -126,6 +128,36 @@ async function hasUsername(rawUsername) {
   );
   return { ok: true, exists: found.rowCount > 0 };
 }
+async function createAccount(rawUsername, rawPassword) {
+  const userCheck = validateUsername(rawUsername);
+  if (!userCheck.ok) return { ok: false, message: userCheck.message };
+  const passwordCheck = validatePassword(rawPassword);
+  if (!passwordCheck.ok) return { ok: false, message: passwordCheck.message };
+
+  const username = userCheck.username;
+  const password = passwordCheck.password;
+  if (!pool) {
+    if (memoryUsers.has(username)) return { ok: false, message: 'El usuario ya existe.' };
+    const credentials = await hashPassword(password);
+    const profile = defaultProfile(username);
+    memoryUsers.set(username, { username, password_salt: credentials.salt, password_hash: credentials.hash, profile });
+    return { ok: true, username, profile };
+  }
+
+  const credentials = await hashPassword(password);
+  const profile = defaultProfile(username);
+  try {
+    await pool.query(
+      'INSERT INTO mh_rp_accounts (username, password_salt, password_hash, profile) VALUES ($1, $2, $3, $4::jsonb)',
+      [username, credentials.salt, credentials.hash, JSON.stringify(profile)]
+    );
+  } catch (error) {
+    if (error && error.code === '23505') return { ok: false, message: 'El usuario ya existe.' };
+    throw error;
+  }
+  return { ok: true, username, profile };
+}
+
 async function authenticate(rawUsername, rawPassword) {
   const userCheck = validateUsername(rawUsername);
   if (!userCheck.ok) return { ok: false, message: userCheck.message };
@@ -135,14 +167,8 @@ async function authenticate(rawUsername, rawPassword) {
   const username = userCheck.username;
   const password = passwordCheck.password;
   if (!pool) {
-    let account = memoryUsers.get(username);
-    if (!account) {
-      const credentials = await hashPassword(password);
-      const profile = defaultProfile(username);
-      account = { username, password_salt: credentials.salt, password_hash: credentials.hash, profile };
-      memoryUsers.set(username, account);
-      return { ok: true, created: true, username, profile };
-    }
+    const account = memoryUsers.get(username);
+    if (!account) return { ok: false, code: 'account_not_found', message: 'El usuario no existe.' };
     const valid = await verifyPassword(password, account.password_salt, account.password_hash);
     if (!valid) return { ok: false, message: 'Usuario o contraseña incorrectos.' };
     account.profile = mergeProfile(defaultProfile(username), account.profile);
@@ -153,13 +179,7 @@ async function authenticate(rawUsername, rawPassword) {
     [username]
   );
   if (found.rowCount === 0) {
-    const credentials = await hashPassword(password);
-    const profile = defaultProfile(username);
-    await pool.query(
-      'INSERT INTO mh_rp_accounts (username, password_salt, password_hash, profile) VALUES ($1, $2, $3, $4::jsonb)',
-      [username, credentials.salt, credentials.hash, JSON.stringify(profile)]
-    );
-    return { ok: true, created: true, username, profile };
+    return { ok: false, code: 'account_not_found', message: 'El usuario no existe.' };
   }
   const row = found.rows[0];
   const valid = await verifyPassword(password, row.password_salt, row.password_hash);
@@ -191,6 +211,7 @@ async function saveProfile(username, profile) {
 module.exports = {
   init,
   authenticate,
+  createAccount,
   saveProfile,
   hasUsername,
   normalizeUsername,

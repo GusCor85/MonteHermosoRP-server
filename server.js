@@ -39,7 +39,7 @@ function cleanProfile(profile) {
 }
 
 function vehicleStateMessage(vehicle) {
-  return {
+  const message = {
     type: 'vehicle_state',
     vehicle_id: vehicle.vehicle_id,
     vehicle_type: vehicle.vehicle_type,
@@ -49,9 +49,12 @@ function vehicleStateMessage(vehicle) {
     rx: vehicle.rx,
     ry: vehicle.ry,
     rz: vehicle.rz,
-    driver_id: vehicle.driver_id || '',
-    ...(vehicle.model_id ? { model_id: vehicle.model_id } : {})
+    driver_id: vehicle.driver_id || ''
   };
+  if (vehicle.model_id) {
+    message.model_id = vehicle.model_id;
+  }
+  return message;
 }
 function playerStateMessage(player) {
   const msg = {
@@ -156,6 +159,16 @@ wss.on('connection', (ws) => {
           }
           return;
         }
+        if (data.type === 'create_account') {
+          const result = await accountStore.createAccount(data.username, data.password);
+          if (!result.ok) {
+            send(ws, { type: 'create_account_error', message: result.message || 'No se pudo crear la cuenta.' });
+            return;
+          }
+          send(ws, { type: 'create_account_ok', username: result.username, profile: result.profile });
+          await authenticateConnection(ws, session, { type: 'auth', username: result.username, password: data.password });
+          return;
+        }
         await authenticateConnection(ws, session, data);
       } catch (error) {
         console.error('[accounts] Error de autenticación:', error);
@@ -199,7 +212,7 @@ wss.on('connection', (ws) => {
         ry: finite(data.ry, old.ry),
         rz: finite(data.rz, old.rz),
         driver_id: player.id,
-        model_id: typeof data.model_id === 'string' ? data.model_id.slice(0, 64) : (old.model_id || '')
+        model_id: String(data.model_id || old.model_id || '')
       };
       vehicles.set(vehicleId, updated);
       broadcast(vehicleStateMessage(updated), ws);
@@ -275,7 +288,7 @@ wss.on('connection', (ws) => {
           ry: finite(v.ry, old.ry),
           rz: finite(v.rz, old.rz),
           driver_id: player.id,
-          model_id: typeof v.model_id === 'string' ? v.model_id.slice(0, 64) : (old.model_id || '')
+          model_id: String(v.model_id || old.model_id || '')
         };
         vehicles.set(requestedVehicleId, updated);
         broadcast(vehicleStateMessage(updated), ws);
