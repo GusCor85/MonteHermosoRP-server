@@ -66,7 +66,6 @@ function mergeProfile(base, incoming) {
   result.display_name = String(source.display_name ?? base.display_name).slice(0, 24);
   result.player_variant = Math.max(0, Math.min(4, Number.parseInt(source.player_variant ?? base.player_variant, 10) || 0));
   result.money = Math.max(0, Math.floor(Number(source.money ?? base.money) || 0));
-  result.bank_balance = Math.max(0, Math.floor(Number(source.bank_balance ?? base.bank_balance) || 0));
   result.job_levels = { ...base.job_levels, ...(source.job_levels || {}) };
   for (const key of Object.keys(result.job_levels)) {
     result.job_levels[key] = Math.max(0, Math.floor(Number(result.job_levels[key]) || 0));
@@ -77,6 +76,7 @@ function mergeProfile(base, incoming) {
   } else if (source.agriculture === null) {
     result.agriculture = null;
   }
+  result.bank_balance = Math.max(0, Math.floor(Number(source.bank_balance ?? base.bank_balance) || 0));
   if (Array.isArray(source.owned_vehicles)) {
     result.owned_vehicles = source.owned_vehicles
       .filter(v => typeof v === 'string')

@@ -39,7 +39,7 @@ function cleanProfile(profile) {
 }
 
 function vehicleStateMessage(vehicle) {
-  const message = {
+  return {
     type: 'vehicle_state',
     vehicle_id: vehicle.vehicle_id,
     vehicle_type: vehicle.vehicle_type,
@@ -51,10 +51,6 @@ function vehicleStateMessage(vehicle) {
     rz: vehicle.rz,
     driver_id: vehicle.driver_id || ''
   };
-  if (vehicle.model_id) {
-    message.model_id = vehicle.model_id;
-  }
-  return message;
 }
 function playerStateMessage(player) {
   const msg = {
@@ -211,8 +207,7 @@ wss.on('connection', (ws) => {
         rx: finite(data.rx, old.rx),
         ry: finite(data.ry, old.ry),
         rz: finite(data.rz, old.rz),
-        driver_id: player.id,
-        model_id: String(data.model_id || old.model_id || '')
+        driver_id: player.id
       };
       vehicles.set(vehicleId, updated);
       broadcast(vehicleStateMessage(updated), ws);
@@ -287,8 +282,7 @@ wss.on('connection', (ws) => {
           rx: finite(v.rx, old.rx),
           ry: finite(v.ry, old.ry),
           rz: finite(v.rz, old.rz),
-          driver_id: player.id,
-          model_id: String(v.model_id || old.model_id || '')
+          driver_id: player.id
         };
         vehicles.set(requestedVehicleId, updated);
         broadcast(vehicleStateMessage(updated), ws);
