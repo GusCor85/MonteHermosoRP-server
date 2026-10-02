@@ -55,7 +55,9 @@ function defaultProfile(username) {
     },
     agriculture: null,
     owned_vehicles: [],
-    bank_balance: 0
+    bank_balance: 0,
+    owned_house_id: '',
+    vehiculos_guardados: []
   };
 }
 function mergeProfile(base, incoming) {
@@ -77,6 +79,18 @@ function mergeProfile(base, incoming) {
     result.agriculture = null;
   }
   result.bank_balance = Math.max(0, Math.floor(Number(source.bank_balance ?? base.bank_balance) || 0));
+  result.owned_house_id = typeof source.owned_house_id === 'string'
+    ? source.owned_house_id.slice(0, 32)
+    : String(base.owned_house_id || '');
+  if (Array.isArray(source.vehiculos_guardados)) {
+    result.vehiculos_guardados = source.vehiculos_guardados
+      .filter(v => typeof v === 'string')
+      .map(v => v.slice(0, 64))
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .slice(0, 2);
+  } else {
+    result.vehiculos_guardados = Array.isArray(base.vehiculos_guardados) ? base.vehiculos_guardados.slice(0, 2) : [];
+  }
   if (Array.isArray(source.owned_vehicles)) {
     result.owned_vehicles = source.owned_vehicles
       .filter(v => typeof v === 'string')

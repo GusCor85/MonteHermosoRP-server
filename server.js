@@ -10,6 +10,24 @@ const vehicles = new Map();
 const VEHICLE_TYPES = new Set(['bus', 'ambulancia', 'barco', 'camion', 'trailero', 'particular', 'taxi', 'helicoptero']);
 const CHAT_RANGE_METERS = 50;
 
+// Casas: cada jugador tiene su propia instancia lógica.
+// El mismo ID de casa puede pertenecer a varios jugadores.
+const HOUSE_PRICES = {
+  pueblo_a: 130000,
+  pueblo_b: 116000,
+  villa_este_b: 100000,
+  villa_oeste_b: 90000,
+  villa_este_a: 84000,
+  villa_oeste_a: 76000,
+  lote_este: 50000,
+  lote_oeste: 44000
+};
+
+function housePrice(houseId) {
+  const price = HOUSE_PRICES[String(houseId || '')];
+  return Number.isFinite(price) ? price : 0;
+}
+
 function send(ws, data) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
 }
@@ -188,6 +206,72 @@ wss.on('connection', (ws) => {
         console.error('[accounts] Error guardando perfil:', error);
         send(ws, { type: 'profile_save_error', message: 'No se pudo guardar el progreso.' });
       }
+      return;
+    }
+    if (data.type === 'house_action') {
+      const action = String(data.action || '');
+      const houseId = String(data.house_id || '');
+      const profile = player.profile && typeof player.profile === 'object' ? player.profile : {};
+      const currentHouseId = String(profile.owned_house_id || '');
+
+      if (action === 'buy') {
+        const price = housePrice(houseId);
+        if (!price) {
+          send(ws, { type: 'house_action_result', ok: false, action, message: 'La casa seleccionada no existe.' });
+          return;
+        }
+        if (currentHouseId) {
+          send(ws, { type: 'house_action_result', ok: false, action, message: 'Ya tenés una casa. Vendela antes de comprar otra.' });
+          return;
+        }
+        const money = Math.max(0, Math.floor(Number(profile.money) || 0));
+        if (money < price) {
+          send(ws, { type: 'house_action_result', ok: false, action, message: `No te alcanza. Te faltan $${price - money}.` });
+          return;
+        }
+
+        profile.money = money - price;
+        profile.owned_house_id = houseId;
+        profile.vehiculos_guardados = [];
+        try {
+          await accountStore.saveProfile(player.username, profile);
+          player.profile = profile;
+          send(ws, { type: 'house_action_result', ok: true, action, house_id: houseId, profile });
+        } catch (error) {
+          console.error('[houses] Error guardando compra:', error);
+          send(ws, { type: 'house_action_result', ok: false, action, message: 'No se pudo guardar la compra.' });
+        }
+        return;
+      }
+
+      if (action === 'sell') {
+        if (!currentHouseId) {
+          send(ws, { type: 'house_action_result', ok: false, action, message: 'No tenés una casa para vender.' });
+          return;
+        }
+        const price = housePrice(currentHouseId);
+        if (!price) {
+          send(ws, { type: 'house_action_result', ok: false, action, message: 'No se pudo determinar el valor de tu casa.' });
+          return;
+        }
+
+        const money = Math.max(0, Math.floor(Number(profile.money) || 0));
+        const refund = Math.floor(price * 0.5);
+        profile.money = money + refund;
+        profile.owned_house_id = '';
+        profile.vehiculos_guardados = [];
+        try {
+          await accountStore.saveProfile(player.username, profile);
+          player.profile = profile;
+          send(ws, { type: 'house_action_result', ok: true, action, house_id: currentHouseId, refund, profile });
+        } catch (error) {
+          console.error('[houses] Error guardando venta:', error);
+          send(ws, { type: 'house_action_result', ok: false, action, message: 'No se pudo guardar la venta.' });
+        }
+        return;
+      }
+
+      send(ws, { type: 'house_action_result', ok: false, action, message: 'Acción de casa no válida.' });
       return;
     }
     if (data.type === 'vehicle_state') {
